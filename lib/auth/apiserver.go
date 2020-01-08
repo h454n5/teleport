@@ -107,6 +107,13 @@ func NewAPIServer(config *APIConfig) http.Handler {
 	srv.POST("/:version/signuptokens/users", srv.withAuth(srv.createUserWithToken))
 	srv.POST("/:version/signuptokens", srv.withAuth(srv.createSignupToken))
 
+	srv.POST("/:version/usertokens/process", srv.withAuth(srv.processUserToken))
+	srv.POST("/:version/usertokens/invites", srv.withAuth(srv.createInviteToken))
+	srv.POST("/:version/usertokens/resets", srv.withAuth(srv.createUserResetToken))
+	srv.GET("/:version/usertokens/:token", srv.withAuth(srv.getUserToken))
+	srv.GET("/:version/userinvites", srv.withAuth(srv.getUserInvites))
+	srv.DELETE("/:version/userinvites/:username", srv.withAuth(srv.deleteUserInvite))
+
 	// Servers and presence heartbeat
 	srv.POST("/:version/namespaces/:namespace/nodes", srv.withAuth(srv.upsertNode))
 	srv.POST("/:version/namespaces/:namespace/nodes/keepalive", srv.withAuth(srv.keepAliveNode))
@@ -1121,6 +1128,76 @@ func (s *APIServer) getClusterCACert(auth ClientI, w http.ResponseWriter, r *htt
 	}
 
 	return localCA, nil
+}
+
+func (s *APIServer) getUserToken(auth ClientI, w http.ResponseWriter, r *http.Request, p httprouter.Params, version string) (interface{}, error) {
+	tokenID := p.ByName("token")
+	usertoken, err := auth.GetUserToken(tokenID)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return usertoken, nil
+}
+
+func (s *APIServer) getUserInvites(auth ClientI, w http.ResponseWriter, r *http.Request, p httprouter.Params, version string) (interface{}, error) {
+	invites, err := auth.GetUserInvites()
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return invites, nil
+}
+
+func (s *APIServer) createInviteToken(auth ClientI, w http.ResponseWriter, r *http.Request, p httprouter.Params, version string) (interface{}, error) {
+	var req services.CreateUserInviteRequest
+	if err := httplib.ReadJSON(r, &req); err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	inviteToken, err := auth.CreateInviteToken(req)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return inviteToken, nil
+}
+
+func (s *APIServer) createUserResetToken(auth ClientI, w http.ResponseWriter, r *http.Request, p httprouter.Params, version string) (interface{}, error) {
+	var req services.CreateUserResetRequest
+	if err := httplib.ReadJSON(r, &req); err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	resetToken, err := auth.CreateUserResetToken(req)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return resetToken, nil
+}
+
+func (s *APIServer) processUserToken(auth ClientI, w http.ResponseWriter, r *http.Request, p httprouter.Params, version string) (interface{}, error) {
+	var req services.UserTokenCompleteRequest
+	if err := httplib.ReadJSON(r, &req); err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	webSession, err := auth.ProcessUserToken(req)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return rawMessage(services.GetWebSessionMarshaler().MarshalWebSession(webSession, services.WithVersion(version)))
+}
+
+func (s *APIServer) deleteUserInvite(auth ClientI, w http.ResponseWriter, r *http.Request, p httprouter.Params, version string) (interface{}, error) {
+	err := auth.DeleteUserInvite(p.ByName("username"))
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return message("ok"), nil
 }
 
 // getU2FAppID returns the U2F AppID in the auth configuration

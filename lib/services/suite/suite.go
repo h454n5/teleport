@@ -675,8 +675,8 @@ func (s *ServicesTestSuite) SAMLCRUD(c *check.C) {
 			Namespace: defaults.Namespace,
 		},
 		Spec: services.SAMLConnectorSpecV2{
-			Issuer:                   "http://example.com",
-			SSO:                      "https://example.com/saml/sso",
+			Issuer: "http://example.com",
+			SSO:    "https://example.com/saml/sso",
 			AssertionConsumerService: "https://localhost/acs",
 			Audience:                 "https://localhost/aud",
 			ServiceProviderIssuer:    "https://localhost/iss",
@@ -889,6 +889,17 @@ func (s *ServicesTestSuite) RemoteClustersCRUD(c *check.C) {
 	err = s.PresenceS.DeleteRemoteCluster(clusterName)
 	fixtures.ExpectNotFound(c, err)
 }
+
+//func (s *ServicesTestSuite) UserInvitesCRUD(c *check.C) {
+//	inviteReq := services.CreateUserInviteRequest{
+//		Name: "bob@example.com",
+//		TTL:  1 * time.Hour,
+//	}
+//
+//	inviteToken, err := s.WebS.CreateUserInviteToken(inviteReq)
+//	c.Assert(err, check.IsNil)
+//	c.Assert(inviteToken.GetUser(), check.Equals, inviteReq.Name)
+//}
 
 // AuthPreference tests authentication preference service
 func (s *ServicesTestSuite) AuthPreference(c *check.C) {

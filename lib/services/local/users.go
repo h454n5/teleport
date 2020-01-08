@@ -661,6 +661,169 @@ func (s *IdentityService) DeleteSignupToken(token string) error {
 	return trace.Wrap(err)
 }
 
+// DeleteUserTokens deletes signup token from the storage
+func (s *IdentityService) DeleteUserTokens(tokenType string, user string) error {
+	userTokens, err := s.GetUserTokens(user)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+
+	for _, token := range userTokens {
+		if token.GetType() != tokenType {
+			continue
+		}
+
+		err = s.DeleteUserToken(token.GetName())
+		if err != nil {
+			return trace.Wrap(err)
+		}
+	}
+
+	return nil
+}
+
+// GetUserTokens returns all tokens for a given user
+func (s *IdentityService) GetUserTokens(user string) ([]services.UserToken, error) {
+	startKey := backend.Key(userTokensPrefix)
+	result, err := s.GetRange(context.TODO(), startKey, backend.RangeEnd(startKey), backend.NoLimit)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	var usertokens []services.UserToken
+	for _, item := range result.Items {
+		usertoken, err := services.UnmarshalUserToken(item.Value)
+		if err != nil {
+			return nil, trace.Wrap(err)
+		}
+
+		if usertoken.GetUser() == user {
+			usertokens = append(usertokens, usertoken)
+		}
+	}
+
+	return usertokens, nil
+}
+
+// DeleteUserToken deletes UserToken by ID
+func (s *IdentityService) DeleteUserToken(tokenID string) error {
+	if err := s.Delete(context.TODO(), backend.Key(userTokensPrefix, tokenID)); err != nil {
+		if trace.IsNotFound(err) {
+			return trace.NotFound("user token(%v) not found", tokenID)
+		}
+		return trace.Wrap(err)
+	}
+	return nil
+}
+
+// GetUserToken returns a token by its ID
+func (s *IdentityService) GetUserToken(tokenID string) (services.UserToken, error) {
+	item, err := s.Get(context.TODO(), backend.Key(userTokensPrefix, tokenID))
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	usertoken, err := services.UnmarshalUserToken(item.Value)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return usertoken, nil
+}
+
+// GetUserInvite returns user invite
+func (s *IdentityService) GetUserInvite(user string) (*services.UserInvite, error) {
+	invites, err := s.GetUserInvites()
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	for _, item := range invites {
+		if item.Name == user {
+			return &item, nil
+		}
+	}
+
+	return nil, trace.NotFound("invite(%v) not found", user)
+}
+
+// GetUserInvites returns user invites.
+func (s *IdentityService) GetUserInvites() ([]services.UserInvite, error) {
+	startKey := backend.Key(userInvitesPrefix)
+	result, err := s.GetRange(context.TODO(), startKey, backend.RangeEnd(startKey), backend.NoLimit)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	invites := make([]services.UserInvite, len(result.Items))
+	for i, item := range result.Items {
+		var invite services.UserInvite
+		err = json.Unmarshal(item.Value, &invite)
+		if err != nil {
+			return nil, trace.Wrap(err)
+		}
+		invites[i] = invite
+	}
+	return invites, nil
+}
+
+// UpsertUserInvite invites a user
+func (s *IdentityService) UpsertUserInvite(userInvite services.UserInvite) (*services.UserInvite, error) {
+	if err := userInvite.CheckAndSetDefaults(); err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	value, err := services.MarshalUserInvite(userInvite)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	item := backend.Item{
+		Key:   backend.Key(userInvitesPrefix, userInvite.Name),
+		Value: value,
+	}
+	_, err = s.Put(context.TODO(), item)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return &userInvite, nil
+}
+
+// DeleteUserInvite deletes user invite
+func (s *IdentityService) DeleteUserInvite(username string) error {
+	if username == "" {
+		return trace.BadParameter("missing parameter username")
+	}
+
+	err := s.Delete(context.TODO(), backend.Key(userInvitesPrefix, username))
+	if err != nil {
+		return trace.Wrap(err)
+	}
+
+	return nil
+}
+
+// CreateUserToken creates a token that is used for signups and resets
+func (s *IdentityService) CreateUserToken(usertoken services.UserToken) (services.UserToken, error) {
+	value, err := services.MarshalUserToken(usertoken)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	item := backend.Item{
+		Key:     backend.Key(userTokensPrefix, usertoken.GetName()),
+		Value:   value,
+		Expires: usertoken.Expiry(),
+	}
+	_, err = s.Create(context.TODO(), item)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return usertoken, nil
+}
+
 func (s *IdentityService) UpsertU2FRegisterChallenge(token string, u2fChallenge *u2f.Challenge) error {
 	if token == "" {
 		return trace.BadParameter("missing parmeter token")
@@ -1244,10 +1407,12 @@ const (
 	githubPrefix                 = "github"
 	requestsPrefix               = "requests"
 	userTokensPrefix             = "addusertokens"
+	userInvitesPrefix            = "invites"
 	u2fRegChalPrefix             = "adduseru2fchallenges"
 	usedTOTPPrefix               = "used_totp"
 	usedTOTPTTL                  = 30 * time.Second
 	u2fRegistrationPrefix        = "u2fregistration"
 	u2fRegistrationCounterPrefix = "u2fregistrationcounter"
 	u2fSignChallengePrefix       = "u2fsignchallenge"
+	userTokenPrefix              = "usertokens"
 )

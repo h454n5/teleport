@@ -167,6 +167,7 @@ func (s *AuthServer) AuthenticateWebUser(req AuthenticateUserRequest) (services.
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
+
 	if clusterConfig.GetLocalAuth() == false {
 		s.emitNoLocalAuthEvent(req.Username)
 		return nil, trace.AccessDenied(noLocalAuth)
@@ -179,22 +180,21 @@ func (s *AuthServer) AuthenticateWebUser(req AuthenticateUserRequest) (services.
 		}
 		return session, nil
 	}
+
 	if err := s.AuthenticateUser(req); err != nil {
 		return nil, trace.Wrap(err)
 	}
+
 	user, err := s.GetUser(req.Username, false)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
-	// It's safe to extract the roles and traits directly from services.User as
-	// this endpoint is only used for local accounts.
-	sess, err := s.NewWebSession(req.Username, user.GetRoles(), user.GetTraits())
+
+	sess, err := s.createUserWebSession(user)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
-	if err := s.UpsertWebSession(req.Username, sess); err != nil {
-		return nil, trace.Wrap(err)
-	}
+
 	sess, err = services.GetWebSessionMarshaler().GenerateWebSession(sess)
 	if err != nil {
 		return nil, trace.Wrap(err)

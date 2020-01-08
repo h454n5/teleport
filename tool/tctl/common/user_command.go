@@ -19,6 +19,7 @@ package common
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -29,7 +30,6 @@ import (
 	"github.com/gravitational/teleport/lib/defaults"
 	"github.com/gravitational/teleport/lib/service"
 	"github.com/gravitational/teleport/lib/services"
-	"github.com/gravitational/teleport/lib/web"
 	"github.com/gravitational/trace"
 )
 
@@ -111,30 +111,39 @@ func (u *UserCommand) Add(client auth.ClientI) error {
 	if u.kubeGroups != "" {
 		kubeGroups = strings.Split(u.kubeGroups, ",")
 	}
-	user := services.UserV1{
-		Name:          u.login,
-		AllowedLogins: strings.Split(u.allowedLogins, ","),
-		KubeGroups:    kubeGroups,
+
+	req := services.CreateUserInviteRequest{
+		Name: u.login,
+		TTL:  u.ttl,
+		Traits: map[string][]string{
+			teleport.TraitLogins:     strings.Split(u.allowedLogins, ","),
+			teleport.TraitKubeGroups: kubeGroups,
+		},
 	}
-	token, err := client.CreateSignupToken(user, u.ttl)
+
+	token, err := client.CreateInviteToken(req)
 	if err != nil {
 		return err
 	}
 
 	// try to auto-suggest the activation link
-	return u.PrintSignupURL(client, token, u.ttl, u.format)
+	return u.PrintInviteURL(token, u.format)
 }
 
-// PrintSignupURL prints signup URL
-func (u *UserCommand) PrintSignupURL(client auth.ClientI, token string, ttl time.Duration, format string) error {
-	signupURL, proxyHost := web.CreateSignupLink(client, token)
+// PrintInviteURL prints signup URL
+func (u *UserCommand) PrintInviteURL(token services.UserToken, format string) error {
+	url, err := url.Parse(token.GetURL())
+	if err != nil {
+		return trace.Wrap(err, "failed to unmarshal URL")
+	}
 
+	ttl := token.Expiry().Sub(time.Now().UTC())
 	if format == teleport.Text {
 		fmt.Printf("Signup token has been created and is valid for %v hours. Share this URL with the user:\n%v\n\n",
-			int(ttl/time.Hour), signupURL)
-		fmt.Printf("NOTE: Make sure %v points at a Teleport proxy which users can access.\n", proxyHost)
+			int(ttl/time.Hour), url)
+		fmt.Printf("NOTE: Make sure %v points at a Teleport proxy which users can access.\n", url.Host)
 	} else {
-		out, err := json.MarshalIndent(services.NewInviteToken(token, signupURL, time.Now().Add(ttl).UTC()), "", "  ")
+		out, err := json.MarshalIndent(services.NewInviteToken(token.GetName(), token.GetURL(), token.Expiry()), "", "  ")
 		if err != nil {
 			return trace.Wrap(err, "failed to marshal signup infos")
 		}

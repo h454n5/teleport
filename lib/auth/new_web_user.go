@@ -279,6 +279,176 @@ func (s *AuthServer) CreateUserWithOTP(token string, password string, otpToken s
 	return webSession, nil
 }
 
+func (s *AuthServer) createUserWebSession(user services.User) (services.WebSession, error) {
+	// It's safe to extract the roles and traits directly from services.User as
+	// this endpoint is only used for local accounts.
+	sess, err := s.NewWebSession(user.GetName(), user.GetRoles(), user.GetTraits())
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	err = s.UpsertWebSession(user.GetName(), sess)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return sess, nil
+}
+
+// ProcessUserToken processes user token and returns an active web session
+func (s *AuthServer) ProcessUserToken(req services.UserTokenCompleteRequest) (services.WebSession, error) {
+	clusterConfig, err := s.GetClusterConfig()
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	if clusterConfig.GetLocalAuth() == false {
+		s.emitNoLocalAuthEvent("")
+		return nil, trace.AccessDenied(noLocalAuth)
+	}
+
+	err = services.VerifyPassword(req.Password)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	userToken, err := s.GetUserToken(req.TokenID)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	if userToken.Expiry().Before(s.clock.Now().UTC()) {
+		return nil, trace.BadParameter("expired token")
+	}
+
+	username := userToken.GetUser()
+	err = s.processUserToken2Factor(req, userToken)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	switch userToken.GetType() {
+	case services.UserTokenTypeReset:
+		err = s.DeleteUserTokens(services.UserTokenTypeReset, username)
+		if err != nil {
+			return nil, trace.Wrap(err)
+		}
+	case services.UserTokenTypeInvite:
+		err := s.createUserFromInvite(userToken.GetUser())
+		if err != nil {
+			return nil, trace.Wrap(err)
+		}
+
+		if err := s.DeleteUserInvite(username); err != nil {
+			return nil, trace.Wrap(err)
+		}
+
+		err = s.DeleteUserTokens(services.UserTokenTypeInvite, username)
+		if err != nil {
+			return nil, trace.Wrap(err)
+		}
+
+	default:
+		return nil, trace.BadParameter("unussuported token type(%v)", userToken.GetType())
+	}
+
+	err = s.UpsertPassword(username, []byte(req.Password))
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	user, err := s.GetUser(username, false)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	sess, err := s.createUserWebSession(user)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return sess, nil
+}
+
+func (s *AuthServer) createUserFromInvite(username string) error {
+	invite, err := s.GetUserInvite(username)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+
+	user, err := services.NewUser(invite.Name)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+
+	user.SetTraits(invite.Traits)
+	user.SetRoles(invite.Roles)
+	if len(user.GetRoles()) == 0 {
+		user.SetRoles([]string{teleport.AdminRoleName})
+	}
+
+	err = s.UpsertUser(user)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+
+	log.Infof("[AUTH] Created user: %v", user)
+	return nil
+}
+
+func (s *AuthServer) processUserToken2Factor(req services.UserTokenCompleteRequest, userToken services.UserToken) error {
+	username := userToken.GetUser()
+	cap, err := s.GetAuthPreference()
+	if err != nil {
+		return trace.Wrap(err)
+	}
+
+	switch cap.GetSecondFactor() {
+	case teleport.OFF:
+		return nil
+	case teleport.OTP, teleport.TOTP, teleport.HOTP:
+		err = s.UpsertTOTP(username, userToken.GetOTPKey())
+		if err != nil {
+			return trace.Wrap(err)
+		}
+
+		err = s.CheckOTP(username, req.SecondFactorToken)
+		if err != nil {
+			log.Debugf("failed to validate a token: %v", err)
+			return trace.AccessDenied("failed to validate a token")
+		}
+
+		return nil
+	case teleport.U2F:
+		_, err = cap.GetU2F()
+		if err != nil {
+			return trace.Wrap(err)
+		}
+
+		challenge, err := s.GetU2FRegisterChallenge(req.TokenID)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+
+		u2fRes := req.U2FRegisterResponse
+		reg, err := u2f.Register(u2fRes, *challenge, &u2f.Config{SkipAttestationVerify: true})
+		if err != nil {
+			return trace.Wrap(err)
+		}
+
+		err = s.UpsertU2FRegistration(username, reg)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		err = s.UpsertU2FRegistrationCounter(username, 0)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+
+		return nil
+	}
+
+	return trace.BadParameter("unknown second factor type %q", cap.GetSecondFactor())
+}
+
 // CreateUserWithoutOTP creates an account with the provided password and deletes the token afterwards.
 func (s *AuthServer) CreateUserWithoutOTP(token string, password string) (services.WebSession, error) {
 	clusterConfig, err := s.GetClusterConfig()
@@ -402,13 +572,7 @@ func (a *AuthServer) createUserAndSession(stoken *services.SignupToken) (service
 		return nil, trace.Wrap(err)
 	}
 
-	// It's safe to extract the roles and traits directly from services.User as
-	// this endpoint is only used for local accounts.
-	sess, err := a.NewWebSession(user.GetName(), user.GetRoles(), user.GetTraits())
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	err = a.UpsertWebSession(user.GetName(), sess)
+	sess, err := a.createUserWebSession(user)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}

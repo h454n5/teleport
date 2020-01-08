@@ -972,6 +972,47 @@ func (a *AuthWithRoles) CreateUserWithoutOTP(token string, password string) (ser
 	return a.authServer.CreateUserWithoutOTP(token, password)
 }
 
+func (a *AuthWithRoles) CreateInviteToken(req services.CreateUserInviteRequest) (services.UserToken, error) {
+	if err := a.action(defaults.Namespace, services.KindUser, services.VerbCreate); err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return a.authServer.CreateInviteToken(req)
+}
+
+func (a *AuthWithRoles) CreateUserResetToken(req services.CreateUserResetRequest) (services.UserToken, error) {
+	if err := a.action(defaults.Namespace, services.KindUser, services.VerbUpdate); err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return a.authServer.CreateUserResetToken(req)
+}
+
+func (a *AuthWithRoles) GetUserToken(token string) (services.UserToken, error) {
+	// tokens are their own authz mechanism, no need to double check
+	return a.authServer.GetUserToken(token)
+}
+
+func (a *AuthWithRoles) GetUserInvites() ([]services.UserInvite, error) {
+	if err := a.action(defaults.Namespace, services.KindUser, services.VerbList); err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return a.authServer.GetUserInvites()
+}
+
+func (a *AuthWithRoles) ProcessUserToken(req services.UserTokenCompleteRequest) (services.WebSession, error) {
+	// token is it's own auth, no need for extra auth
+	return a.authServer.ProcessUserToken(req)
+}
+
+func (a *AuthWithRoles) DeleteUserInvite(username string) error {
+	if err := a.action(defaults.Namespace, services.KindUser, services.VerbDelete); err != nil {
+		return trace.Wrap(err)
+	}
+	return a.authServer.DeleteUserInvite(username)
+}
+
 func (a *AuthWithRoles) CreateUserWithU2FToken(token string, password string, u2fRegisterResponse u2f.RegisterResponse) (services.WebSession, error) {
 	// signup tokens are their own authz resource
 	return a.authServer.CreateUserWithU2FToken(token, password, u2fRegisterResponse)

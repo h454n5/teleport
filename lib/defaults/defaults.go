@@ -126,6 +126,15 @@ const (
 	// clients can reduce this time, not increase it
 	MaxSignupTokenTTL = 48 * time.Hour
 
+	// MaxUserResetTokenTTL is a maximum TTL for password reset token
+	MaxUserResetTokenTTL = 24 * time.Hour
+
+	// UserResetTokenTTL is a default password reset token expiry time
+	UserResetTokenTTL = 8 * time.Hour
+
+	// ResetPasswordLength is the length of the reset user password
+	ResetPasswordLength = 10
+
 	// ProvisioningTokenTTL is a the default TTL for server provisioning
 	// tokens. When a user generates a token without an explicit TTL, this
 	// value is used.

@@ -1658,6 +1658,84 @@ func (c *Client) CreateUserWithoutOTP(token string, password string) (services.W
 	return services.GetWebSessionMarshaler().UnmarshalWebSession(out.Bytes())
 }
 
+// GetUserInvites returns user invites
+func (c *Client) GetUserInvites() ([]services.UserInvite, error) {
+	out, err := c.Get(c.Endpoint("userinvites"), url.Values{})
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	var invites []services.UserInvite
+	if err := json.Unmarshal(out.Bytes(), &invites); err != nil {
+		return nil, trace.Wrap(err)
+	}
+	return invites, nil
+}
+
+// GetUserToken returns user token
+func (c *Client) GetUserToken(token string) (services.UserToken, error) {
+	out, err := c.Get(c.Endpoint("usertokens", token), url.Values{})
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	var usertoken services.UserToken
+	if err := json.Unmarshal(out.Bytes(), &usertoken); err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return usertoken, nil
+}
+
+// CreateInviteToken creates invite token
+func (c *Client) CreateInviteToken(req services.CreateUserInviteRequest) (services.UserToken, error) {
+	out, err := c.PostJSON(c.Endpoint("usertokens", "invites"), req)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	var inviteToken services.UserToken
+	if err := json.Unmarshal(out.Bytes(), &inviteToken); err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return inviteToken, nil
+}
+
+// CreateUserResetToken creates user reset token
+func (c *Client) CreateUserResetToken(req services.CreateUserResetRequest) (services.UserToken, error) {
+	out, err := c.PostJSON(c.Endpoint("usertokens", "resets"), req)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	var resetToken services.UserToken
+	if err := json.Unmarshal(out.Bytes(), &resetToken); err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return resetToken, nil
+}
+
+// ProcessUserToken processes usertoken
+func (c *Client) ProcessUserToken(req services.UserTokenCompleteRequest) (services.WebSession, error) {
+	out, err := c.PostJSON(c.Endpoint("usertokens", "process"), req)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	return services.GetWebSessionMarshaler().UnmarshalWebSession(out.Bytes())
+}
+
+// DeleteUserInvite deletes user invite
+func (c *Client) DeleteUserInvite(username string) error {
+	_, err := c.Delete(c.Endpoint("userinvites", username))
+	if err != nil {
+		return trace.Wrap(err)
+	}
+
+	return nil
+}
+
 // CreateUserWithU2FToken creates user account with provided token and U2F sign response
 func (c *Client) CreateUserWithU2FToken(token string, password string, u2fRegisterResponse u2f.RegisterResponse) (services.WebSession, error) {
 	out, err := c.PostJSON(c.Endpoint("u2f", "users"), createUserWithU2FTokenReq{
@@ -2673,6 +2751,27 @@ type IdentityService interface {
 
 	// DeleteAllUsers deletes all users
 	DeleteAllUsers() error
+
+	// CreateUserInvite creates a new invite token for a user.
+	CreateInviteToken(req services.CreateUserInviteRequest) (services.UserToken, error)
+
+	// CreateUserResetToken creates a new user reset token
+	CreateUserResetToken(req services.CreateUserResetRequest) (services.UserToken, error)
+
+	// ProcessUserToken processes user token
+	ProcessUserToken(req services.UserTokenCompleteRequest) (services.WebSession, error)
+
+	// GetUserToken returns user token
+	GetUserToken(username string) (services.UserToken, error)
+
+	// GetUserInvites returns user invites
+	GetUserInvites() ([]services.UserInvite, error)
+
+	// GetUserInvite returns user invites
+	//GetUserInvite(username string) (*services.UserInvite, error)
+
+	// DeleteUserInvite deletes user invite
+	DeleteUserInvite(username string) error
 }
 
 // ProvisioningService is a service in control

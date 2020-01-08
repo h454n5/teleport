@@ -213,6 +213,30 @@ type Identity interface {
 	CreateGithubAuthRequest(req GithubAuthRequest) error
 	// GetGithubAuthRequest retrieves Github auth request by the token
 	GetGithubAuthRequest(stateToken string) (*GithubAuthRequest, error)
+
+	// DeleteUserToken deletes user token
+	CreateUserToken(usertoken UserToken) (UserToken, error)
+
+	// DeleteUserTokens deletes user tokens
+	DeleteUserTokens(tokenType string, user string) error
+
+	// DeleteUserInvite deletes user invite
+	DeleteUserInvite(username string) error
+
+	// GetUserInvites returns all user invites
+	GetUserInvites() ([]UserInvite, error)
+
+	// GetUserTokens returns user tokens
+	GetUserTokens(user string) ([]UserToken, error)
+
+	// GetUserToken returns user token
+	GetUserToken(tokenID string) (UserToken, error)
+
+	// UpsertUserInvite upserts user invite
+	UpsertUserInvite(userInvite UserInvite) (*UserInvite, error)
+
+	// GetUserInvite returns user invite
+	GetUserInvite(user string) (*UserInvite, error)
 }
 
 // VerifyPassword makes sure password satisfies our requirements (relaxed),
