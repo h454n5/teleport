@@ -44,7 +44,6 @@ import (
 	"github.com/gravitational/teleport/lib"
 	"github.com/gravitational/teleport/lib/auth"
 	"github.com/gravitational/teleport/lib/auth/testauthority"
-	"github.com/gravitational/teleport/lib/backend"
 	"github.com/gravitational/teleport/lib/bpf"
 	"github.com/gravitational/teleport/lib/client"
 	"github.com/gravitational/teleport/lib/defaults"
@@ -3691,8 +3690,9 @@ func (s *IntSuite) TestMultipleSignup(c *check.C) {
 	defer tr.Stop()
 
 	type createNewUserReq struct {
-		InviteToken string `json:"invite_token"`
-		Pass        string `json:"pass"`
+		secondFactorToken string `json:"second_factor_token"`
+		tokenID           string `json:"token"`
+		password          []byte `json:"password"`
 	}
 
 	// Create and start a Teleport cluster.
@@ -3726,10 +3726,12 @@ func (s *IntSuite) TestMultipleSignup(c *check.C) {
 		c.Assert(err, check.IsNil)
 
 		// Create signup token, this is like doing "tctl users add foo foo".
-		token, err := mainAuth.CreateSignupToken(services.UserV1{
-			Name:          username,
-			AllowedLogins: []string{username},
-		}, backend.Forever)
+		token, err := mainAuth.CreateInviteToken(services.CreateUserInviteRequest{
+			Name: username,
+			Traits: map[string][]string{
+				teleport.TraitLogins: []string{username},
+			},
+		})
 		c.Assert(err, check.IsNil)
 
 		// Create client that will simulate web browser.
@@ -3737,13 +3739,13 @@ func (s *IntSuite) TestMultipleSignup(c *check.C) {
 		c.Assert(err, check.IsNil)
 
 		// Render the signup page.
-		_, err = clt.Get(context.Background(), clt.Endpoint("webapi", "users", "invites", token), url.Values{})
+		_, err = clt.Get(context.Background(), clt.Endpoint("webapi", "tokens", "user", token.GetName()), url.Values{})
 		c.Assert(err, check.IsNil)
 
 		// Make sure signup is successful.
-		_, err = clt.PostJSON(context.Background(), clt.Endpoint("webapi", "users"), createNewUserReq{
-			InviteToken: token,
-			Pass:        "fake-password-123",
+		_, err = clt.PostJSON(context.Background(), clt.Endpoint("webapi", "tokens", "process"), createNewUserReq{
+			tokenID:  token.GetName(),
+			password: []byte("fake-password-123"),
 		})
 		c.Assert(err, check.IsNil)
 	}

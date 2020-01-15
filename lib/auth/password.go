@@ -10,12 +10,60 @@ import (
 	"github.com/gravitational/teleport/lib/services"
 	"github.com/gravitational/teleport/lib/utils"
 	"github.com/gravitational/trace"
+	"github.com/tstranex/u2f"
 
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 )
 
 var fakePasswordHash = []byte(`$2a$10$Yy.e6BmS2SrGbBDsyDLVkOANZmvjjMR890nUGSXFJHBXWzxe7T44m`)
+
+// ChangePasswordWithTokenRequest defines a request to change user password
+type ChangePasswordWithTokenRequest struct {
+	// SecondFactorToken is 2nd factor token value
+	SecondFactorToken string `json:"second_factor_token"`
+	// TokenID is this token ID
+	TokenID string `json:"token"`
+	// Password is user password
+	Password []byte `json:"password"`
+	// U2FRegisterResponse is U2F register response
+	U2FRegisterResponse u2f.RegisterResponse `json:"u2f_register_response"`
+}
+
+// ChangePasswordWithToken changes password with user token
+func (s *AuthServer) ChangePasswordWithToken(req ChangePasswordWithTokenRequest) (services.WebSession, error) {
+	user, err := s.changePasswordWithToken(req)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	sess, err := s.createUserWebSession(user)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return sess, nil
+}
+
+// ResetPassword resets the user password and returns the new one
+func (s *AuthServer) ResetPassword(email string) (string, error) {
+	user, err := s.GetUser(email, false)
+	if err != nil {
+		return "", trace.Wrap(err)
+	}
+
+	password, err := utils.CryptoRandomHex(defaults.ResetPasswordLength)
+	if err != nil {
+		return "", trace.Wrap(err)
+	}
+
+	err = s.UpsertPassword(user.GetName(), []byte(password))
+	if err != nil {
+		return "", trace.Wrap(err)
+	}
+
+	return password, nil
+}
 
 // ChangePassword changes user passsword
 func (s *AuthServer) ChangePassword(req services.ChangePasswordReq) error {
@@ -165,6 +213,37 @@ func (s *AuthServer) CheckOTP(user string, otpToken string) error {
 	return nil
 }
 
+// CreateSignupU2FRegisterRequest creates U2F requests
+func (s *AuthServer) CreateSignupU2FRegisterRequest(tokenID string) (u2fRegisterRequest *u2f.RegisterRequest, e error) {
+	cap, err := s.GetAuthPreference()
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	universalSecondFactor, err := cap.GetU2F()
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	_, err = s.GetUserToken(tokenID)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	c, err := u2f.NewChallenge(universalSecondFactor.AppID, universalSecondFactor.Facets)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	err = s.UpsertU2FRegisterChallenge(tokenID, c)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	request := c.RegisterRequest()
+	return request, nil
+}
+
 // getOTPType returns the type of OTP token used, HOTP or TOTP.
 // Deprecated: Remove this method once HOTP support has been removed.
 func (s *AuthServer) getOTPType(user string) (string, error) {
@@ -197,4 +276,106 @@ func (s *AuthServer) GetOTPData(user string) (string, []byte, error) {
 	}
 
 	return otpURL, otpQR, nil
+}
+
+func (s *AuthServer) changePasswordWithToken(req ChangePasswordWithTokenRequest) (services.User, error) {
+	clusterConfig, err := s.GetClusterConfig()
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	if clusterConfig.GetLocalAuth() == false {
+		return nil, trace.AccessDenied(noLocalAuth)
+	}
+
+	err = services.VerifyPassword(req.Password)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	userToken, err := s.GetUserToken(req.TokenID)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	if userToken.Expiry().Before(s.clock.Now().UTC()) {
+		return nil, trace.BadParameter("expired token")
+	}
+
+	username := userToken.GetUser()
+	err = s.processUserToken2Factor(req, userToken)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	err = s.deleteUserTokens(username)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	err = s.UpsertPassword(username, []byte(req.Password))
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	user, err := s.GetUser(username, false)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return user, nil
+}
+
+func (s *AuthServer) processUserToken2Factor(req ChangePasswordWithTokenRequest, userToken services.UserToken) error {
+	username := userToken.GetUser()
+	cap, err := s.GetAuthPreference()
+	if err != nil {
+		return trace.Wrap(err)
+	}
+
+	switch cap.GetSecondFactor() {
+	case teleport.OFF:
+		return nil
+	case teleport.OTP, teleport.TOTP, teleport.HOTP:
+		err = s.UpsertTOTP(username, userToken.GetOTPKey())
+		if err != nil {
+			return trace.Wrap(err)
+		}
+
+		err = s.CheckOTP(username, req.SecondFactorToken)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+
+		return nil
+	case teleport.U2F:
+		_, err = cap.GetU2F()
+		if err != nil {
+			return trace.Wrap(err)
+		}
+
+		challenge, err := s.GetU2FRegisterChallenge(req.TokenID)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+
+		u2fRes := req.U2FRegisterResponse
+		reg, err := u2f.Register(u2fRes, *challenge, &u2f.Config{SkipAttestationVerify: true})
+		if err != nil {
+			return trace.Wrap(err)
+		}
+
+		err = s.UpsertU2FRegistration(username, reg)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+
+		err = s.UpsertU2FRegistrationCounter(username, 0)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+
+		return nil
+	}
+
+	return trace.BadParameter("unknown second factor type %q", cap.GetSecondFactor())
 }

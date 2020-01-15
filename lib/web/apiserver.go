@@ -167,10 +167,10 @@ func NewHandler(cfg Config, opts ...HandlerOption) (*RewritingHandler, error) {
 	h.DELETE("/webapi/sessions", h.WithAuth(h.deleteSession))
 	h.POST("/webapi/sessions/renew", h.WithAuth(h.renewSession))
 
-	// Users
-	h.GET("/webapi/users/invites/:token", httplib.MakeHandler(h.renderUserInvite))
-	h.POST("/webapi/users", httplib.MakeHandler(h.createNewUser))
+	h.GET("/webapi/usertokens/:token", httplib.MakeHandler(h.getUserToken))
+	h.PUT("/webapi/users/password/usertoken", httplib.WithCSRFProtection(h.changePasswordWithToken))
 	h.PUT("/webapi/users/password", h.WithAuth(h.changePassword))
+	h.POST("/webapi/sites/:site/namespaces/:namespace/usertokens", h.WithClusterAuth(h.createUserToken))
 
 	// Issues SSH temp certificates based on 2FA access creds
 	h.POST("/webapi/ssh/certs", httplib.MakeHandler(h.createSSHCert))
@@ -222,7 +222,6 @@ func NewHandler(cfg Config, opts ...HandlerOption) (*RewritingHandler, error) {
 
 	// U2F related APIs
 	h.GET("/webapi/u2f/signuptokens/:token", httplib.MakeHandler(h.u2fRegisterRequest))
-	h.POST("/webapi/u2f/users", httplib.MakeHandler(h.createNewU2FUser))
 	h.POST("/webapi/u2f/password/changerequest", h.WithAuth(h.u2fChangePasswordRequest))
 	h.POST("/webapi/u2f/signrequest", httplib.MakeHandler(h.u2fSignRequest))
 	h.POST("/webapi/u2f/sessions", httplib.MakeHandler(h.createSessionWithU2FSignResponse))
@@ -1027,19 +1026,6 @@ type CreateSessionResponse struct {
 	ExpiresIn int `json:"expires_in"`
 }
 
-type createSessionResponseRaw struct {
-	// Type is token type (bearer)
-	Type string `json:"type"`
-	// Token value
-	Token string `json:"token"`
-	// ExpiresIn sets seconds before this token is not valid
-	ExpiresIn int `json:"expires_in"`
-}
-
-func (r createSessionResponseRaw) response() (*CreateSessionResponse, error) {
-	return &CreateSessionResponse{Type: r.Type, Token: r.Token, ExpiresIn: r.ExpiresIn}, nil
-}
-
 func NewSessionResponse(ctx *SessionContext) (*CreateSessionResponse, error) {
 	clt, err := ctx.GetClient()
 	if err != nil {
@@ -1177,33 +1163,35 @@ func (h *Handler) renewSession(w http.ResponseWriter, r *http.Request, _ httprou
 	return NewSessionResponse(newContext)
 }
 
-type renderUserInviteResponse struct {
-	InviteToken string `json:"invite_token"`
-	User        string `json:"user"`
-	QR          []byte `json:"qr"`
-}
-
-// renderUserInvite is called to show user the new user invitation page
-//
-// GET /v1/webapi/users/invites/:token
-//
-// Response:
-//
-// {"invite_token": "token", "user": "alex", qr: "base64-encoded-qr-code image"}
-//
-//
-func (h *Handler) renderUserInvite(w http.ResponseWriter, r *http.Request, p httprouter.Params) (interface{}, error) {
-	token := p[0].Value
-	user, qrCodeBytes, err := h.auth.GetUserInviteInfo(token)
-	if err != nil {
+func (h *Handler) changePasswordWithToken(w http.ResponseWriter, r *http.Request, p httprouter.Params) (interface{}, error) {
+	var req auth.ChangePasswordWithTokenRequest
+	if err := httplib.ReadJSON(r, &req); err != nil {
 		return nil, trace.Wrap(err)
 	}
 
-	return &renderUserInviteResponse{
-		InviteToken: token,
-		User:        user,
-		QR:          qrCodeBytes,
-	}, nil
+	sess, err := h.auth.proxyClient.ChangePasswordWithToken(req)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	ctx, err := h.auth.ValidateSession(sess.GetUser(), sess.GetName())
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	if err := SetSession(w, sess.GetUser(), sess.GetName()); err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return NewSessionResponse(ctx)
+}
+
+func (h *Handler) getUserToken(w http.ResponseWriter, r *http.Request, p httprouter.Params) (interface{}, error) {
+	userToken, err := h.auth.proxyClient.GetUserToken(p[0].Value)
+	if err != nil {
+		log.Errorf("failed to fetch user token: %v", trace.DebugReport(err))
+		// we hide the error from the remote user to avoid giving any hints
+		return nil, trace.AccessDenied("bad or expired token")
+	}
+	return userToken, nil
 }
 
 // u2fRegisterRequest is called to get a U2F challenge for registering a U2F key
@@ -1283,76 +1271,6 @@ func (h *Handler) createSessionWithU2FSignResponse(w http.ResponseWriter, r *htt
 	return NewSessionResponse(ctx)
 }
 
-// createNewUser req is a request to create a new Teleport user
-type createNewUserReq struct {
-	InviteToken       string `json:"invite_token"`
-	Pass              string `json:"pass"`
-	SecondFactorToken string `json:"second_factor_token,omitempty"`
-}
-
-// createNewUser creates new user entry based on the invite token
-//
-// POST /v1/webapi/users
-//
-// {"invite_token": "unique invite token", "pass": "user password", "second_factor_token": "valid second factor token"}
-//
-// Successful response: (session cookie is set)
-//
-// {"type": "bearer", "token": "bearer token", "user": "alex", "expires_in": 20}
-func (h *Handler) createNewUser(w http.ResponseWriter, r *http.Request, p httprouter.Params) (interface{}, error) {
-	var req *createNewUserReq
-	if err := httplib.ReadJSON(r, &req); err != nil {
-		return nil, trace.Wrap(err)
-	}
-	sess, err := h.auth.CreateNewUser(req.InviteToken, req.Pass, req.SecondFactorToken)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	ctx, err := h.auth.ValidateSession(sess.GetUser(), sess.GetName())
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	if err := SetSession(w, sess.GetUser(), sess.GetName()); err != nil {
-		return nil, trace.Wrap(err)
-	}
-	return NewSessionResponse(ctx)
-}
-
-// A request to create a new user which uses U2F as the second factor
-type createNewU2FUserReq struct {
-	InviteToken         string               `json:"invite_token"`
-	Pass                string               `json:"pass"`
-	U2FRegisterResponse u2f.RegisterResponse `json:"u2f_register_response"`
-}
-
-// createNewU2FUser creates a new user configured to use U2F as the second factor
-//
-// POST /webapi/u2f/users
-//
-// {"invite_token": "unique invite token", "pass": "user password", "u2f_register_response": {"registrationData":"verylongbase64string","clientData":"longbase64string"}}
-//
-// Successful response: (session cookie is set)
-//
-// {"type": "bearer", "token": "bearer token", "user": "alex", "expires_in": 20}
-func (h *Handler) createNewU2FUser(w http.ResponseWriter, r *http.Request, p httprouter.Params) (interface{}, error) {
-	var req *createNewU2FUserReq
-	if err := httplib.ReadJSON(r, &req); err != nil {
-		return nil, trace.Wrap(err)
-	}
-	sess, err := h.auth.CreateNewU2FUser(req.InviteToken, req.Pass, req.U2FRegisterResponse)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	ctx, err := h.auth.ValidateSession(sess.GetUser(), sess.GetName())
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	if err := SetSession(w, sess.GetUser(), sess.GetName()); err != nil {
-		return nil, trace.Wrap(err)
-	}
-	return NewSessionResponse(ctx)
-}
-
 // getClusters returns a list of clusters
 //
 // GET /v1/webapi/sites
@@ -1415,6 +1333,25 @@ func (h *Handler) siteNodesGet(w http.ResponseWriter, r *http.Request, p httprou
 
 	uiServers := ui.MakeServers(site.GetName(), servers)
 	return makeResponse(uiServers)
+}
+
+func (h *Handler) createUserToken(w http.ResponseWriter, r *http.Request, p httprouter.Params, ctx *SessionContext, site reversetunnel.RemoteSite) (interface{}, error) {
+	clt, err := ctx.GetUserClient(site)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	var req auth.CreateUserTokenRequest
+	if err := httplib.ReadJSON(r, &req); err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	userToken, err := clt.CreateUserToken(req)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return userToken, nil
 }
 
 // siteNodeConnect connect to the site node

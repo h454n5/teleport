@@ -1046,41 +1046,27 @@ func (a *AuthWithRoles) GenerateUserCerts(ctx context.Context, req proto.UserCer
 	}, nil
 }
 
-func (a *AuthWithRoles) CreateSignupToken(user services.UserV1, ttl time.Duration) (token string, e error) {
-	if err := a.action(defaults.Namespace, services.KindUser, services.VerbCreate); err != nil {
-		return "", trace.Wrap(err)
-	}
-	return a.authServer.CreateSignupToken(user, ttl)
-}
-
-func (a *AuthWithRoles) GetSignupTokenData(token string) (user string, otpQRCode []byte, err error) {
-	// signup token are their own authz resource
-	return a.authServer.GetSignupTokenData(token)
-}
-
-func (a *AuthWithRoles) GetSignupToken(token string) (*services.SignupToken, error) {
-	// signup token are their own authz resource
-	return a.authServer.GetSignupToken(token)
-}
-
 func (a *AuthWithRoles) GetSignupU2FRegisterRequest(token string) (u2fRegisterRequest *u2f.RegisterRequest, e error) {
 	// signup token are their own authz resource
 	return a.authServer.CreateSignupU2FRegisterRequest(token)
 }
 
-func (a *AuthWithRoles) CreateUserWithOTP(token, password, otpToken string) (services.WebSession, error) {
-	// tokens are their own authz mechanism, no need to double check
-	return a.authServer.CreateUserWithOTP(token, password, otpToken)
+func (a *AuthWithRoles) CreateUserToken(req CreateUserTokenRequest) (services.UserToken, error) {
+	if err := a.action(defaults.Namespace, services.KindUser, services.VerbUpdate); err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return a.authServer.CreateUserToken(req)
 }
 
-func (a *AuthWithRoles) CreateUserWithoutOTP(token string, password string) (services.WebSession, error) {
+func (a *AuthWithRoles) GetUserToken(token string) (services.UserToken, error) {
 	// tokens are their own authz mechanism, no need to double check
-	return a.authServer.CreateUserWithoutOTP(token, password)
+	return a.authServer.GetUserToken(token)
 }
 
-func (a *AuthWithRoles) CreateUserWithU2FToken(token string, password string, u2fRegisterResponse u2f.RegisterResponse) (services.WebSession, error) {
-	// signup tokens are their own authz resource
-	return a.authServer.CreateUserWithU2FToken(token, password, u2fRegisterResponse)
+func (a *AuthWithRoles) ChangePasswordWithToken(req ChangePasswordWithTokenRequest) (services.WebSession, error) {
+	// token is it's own auth, no need for extra auth
+	return a.authServer.ChangePasswordWithToken(req)
 }
 
 func (a *AuthWithRoles) UpsertUser(u services.User) error {

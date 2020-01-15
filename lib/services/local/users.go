@@ -593,72 +593,74 @@ func (s *IdentityService) UpsertPassword(user string, password []byte) error {
 	return nil
 }
 
-// UpsertSignupToken upserts signup token - one time token that lets user to create a user account
-func (s *IdentityService) UpsertSignupToken(token string, tokenData services.SignupToken, ttl time.Duration) error {
-	if ttl < time.Second || ttl > defaults.MaxSignupTokenTTL {
-		ttl = defaults.MaxSignupTokenTTL
-	}
-	tokenData.Expires = time.Now().UTC().Add(ttl)
-	value, err := json.Marshal(tokenData)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	item := backend.Item{
-		Key:     backend.Key(userTokensPrefix, token),
-		Value:   value,
-		Expires: tokenData.Expires,
-	}
-	_, err = s.Put(context.TODO(), item)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	return nil
-
-}
-
-// GetSignupToken returns signup token data
-func (s *IdentityService) GetSignupToken(token string) (*services.SignupToken, error) {
-	if token == "" {
-		return nil, trace.BadParameter("missing token")
-	}
-	item, err := s.Get(context.TODO(), backend.Key(userTokensPrefix, token))
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	var signupToken services.SignupToken
-	err = json.Unmarshal(item.Value, &signupToken)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	return &signupToken, nil
-}
-
-// GetSignupTokens returns all non-expired user tokens
-func (s *IdentityService) GetSignupTokens() ([]services.SignupToken, error) {
+// GetUserTokens returns all UserTokens
+func (s *IdentityService) GetUserTokens() ([]services.UserToken, error) {
 	startKey := backend.Key(userTokensPrefix)
 	result, err := s.GetRange(context.TODO(), startKey, backend.RangeEnd(startKey), backend.NoLimit)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
-	tokens := make([]services.SignupToken, len(result.Items))
-	for i, item := range result.Items {
-		var signupToken services.SignupToken
-		err = json.Unmarshal(item.Value, &signupToken)
+
+	var usertokens []services.UserToken
+	for _, item := range result.Items {
+		usertoken, err := services.UnmarshalUserToken(item.Value)
 		if err != nil {
 			return nil, trace.Wrap(err)
 		}
-		tokens[i] = signupToken
+
+		usertokens = append(usertokens, usertoken)
 	}
-	return tokens, nil
+
+	return usertokens, nil
 }
 
-// DeleteSignupToken deletes signup token from the storage
-func (s *IdentityService) DeleteSignupToken(token string) error {
-	if token == "" {
-		return trace.BadParameter("missing parameter token")
+// DeleteUserToken deletes UserToken by ID
+func (s *IdentityService) DeleteUserToken(tokenID string) error {
+	if err := s.Delete(context.TODO(), backend.Key(userTokensPrefix, tokenID)); err != nil {
+		if trace.IsNotFound(err) {
+			return trace.NotFound("user token(%v) not found", tokenID)
+		}
+		return trace.Wrap(err)
 	}
-	err := s.Delete(context.TODO(), backend.Key(userTokensPrefix, token))
-	return trace.Wrap(err)
+	return nil
+}
+
+// GetUserToken returns a token by its ID
+func (s *IdentityService) GetUserToken(tokenID string) (services.UserToken, error) {
+	item, err := s.Get(context.TODO(), backend.Key(userTokensPrefix, tokenID))
+	if err != nil {
+		if trace.IsNotFound(err) {
+			return nil, trace.NotFound("user token(%v) not found", tokenID)
+		}
+		return nil, trace.Wrap(err)
+	}
+
+	usertoken, err := services.UnmarshalUserToken(item.Value)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return usertoken, nil
+}
+
+// CreateUserToken creates a token that is used for signups and resets
+func (s *IdentityService) CreateUserToken(usertoken services.UserToken) (services.UserToken, error) {
+	value, err := services.MarshalUserToken(usertoken)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	item := backend.Item{
+		Key:     backend.Key(userTokensPrefix, usertoken.GetName()),
+		Value:   value,
+		Expires: usertoken.Expiry(),
+	}
+	_, err = s.Create(context.TODO(), item)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return usertoken, nil
 }
 
 func (s *IdentityService) UpsertU2FRegisterChallenge(token string, u2fChallenge *u2f.Challenge) error {
@@ -1243,7 +1245,8 @@ const (
 	samlPrefix                   = "saml"
 	githubPrefix                 = "github"
 	requestsPrefix               = "requests"
-	userTokensPrefix             = "addusertokens"
+	userTokensPrefix             = "usertokens"
+	userInvitesPrefix            = "invites"
 	u2fRegChalPrefix             = "adduseru2fchallenges"
 	usedTOTPPrefix               = "used_totp"
 	usedTOTPTTL                  = 30 * time.Second
