@@ -207,12 +207,7 @@ func (u *UserCommand) Add(client auth.ClientI) error {
 }
 
 func printTokenAsJSON(token services.UserToken) error {
-	// create a shallow instance of user token
-	tokenToPrint := services.NewUserToken(token.GetName())
-	tokenToPrint.Spec.Created = token.GetCreated()
-	tokenToPrint.Spec.User = token.GetUser()
-	tokenToPrint.Spec.URL = token.GetURL()
-	out, err := json.MarshalIndent(tokenToPrint, "", "  ")
+	out, err := json.MarshalIndent(token, "", "  ")
 	if err != nil {
 		return trace.Wrap(err, "failed to marshal user token")
 	}

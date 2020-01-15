@@ -27,7 +27,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -1205,13 +1204,6 @@ func (s *TLSSuite) TestOTPCRUD(c *check.C) {
 	err = s.server.Auth().UpsertTOTP(user, otpSecret)
 	c.Assert(err, check.IsNil)
 
-	// make sure the otp url we get back is valid url issued to the correct user
-	otpURL, _, err := s.server.Auth().GetOTPData(user)
-	c.Assert(err, check.IsNil)
-	u, err := url.Parse(otpURL)
-	c.Assert(err, check.IsNil)
-	c.Assert(u.Path, check.Equals, "/user1")
-
 	// a completely invalid token should return access denied
 	err = clt.CheckPassword("user1", pass, "123456")
 	c.Assert(err, check.NotNil)
@@ -1763,14 +1755,6 @@ func (s *TLSSuite) TestAuthenticateWebUserOTP(c *check.C) {
 
 	err = s.server.Auth().UpsertTOTP(user, otpSecret)
 	c.Assert(err, check.IsNil)
-
-	otpURL, _, err := s.server.Auth().GetOTPData(user)
-	c.Assert(err, check.IsNil)
-
-	// make sure label in url is correct
-	u, err := url.Parse(otpURL)
-	c.Assert(err, check.IsNil)
-	c.Assert(u.Path, check.Equals, "/ws-test")
 
 	// create a valid otp token
 	validToken, err := totp.GenerateCode(otpSecret, s.server.Clock().Now())

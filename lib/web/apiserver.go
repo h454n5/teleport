@@ -167,7 +167,7 @@ func NewHandler(cfg Config, opts ...HandlerOption) (*RewritingHandler, error) {
 	h.DELETE("/webapi/sessions", h.WithAuth(h.deleteSession))
 	h.POST("/webapi/sessions/renew", h.WithAuth(h.renewSession))
 
-	h.GET("/webapi/usertokens/:token", httplib.MakeHandler(h.getUserToken))
+	h.GET("/webapi/usertokens/:token", httplib.MakeHandler(h.getUserTokenHandle))
 	h.PUT("/webapi/users/password/usertoken", httplib.WithCSRFProtection(h.changePasswordWithToken))
 	h.PUT("/webapi/users/password", h.WithAuth(h.changePassword))
 	h.POST("/webapi/sites/:site/namespaces/:namespace/usertokens", h.WithClusterAuth(h.createUserToken))
@@ -1184,14 +1184,38 @@ func (h *Handler) changePasswordWithToken(w http.ResponseWriter, r *http.Request
 	return NewSessionResponse(ctx)
 }
 
-func (h *Handler) getUserToken(w http.ResponseWriter, r *http.Request, p httprouter.Params) (interface{}, error) {
-	userToken, err := h.auth.proxyClient.GetUserToken(p[0].Value)
+func (h *Handler) getUserTokenHandle(w http.ResponseWriter, r *http.Request, p httprouter.Params) (interface{}, error) {
+	result, err := h.getUserToken(p[0].Value)
 	if err != nil {
-		log.Errorf("failed to fetch user token: %v", trace.DebugReport(err))
+		log.Warnf("failed to fetch user token: %v", err)
 		// we hide the error from the remote user to avoid giving any hints
 		return nil, trace.AccessDenied("bad or expired token")
 	}
-	return userToken, nil
+
+	return result, nil
+}
+
+func (h *Handler) getUserToken(tokenID string) (interface{}, error) {
+	userToken, err := h.auth.proxyClient.GetUserToken(tokenID)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	resource, err := h.cfg.ProxyClient.GetClusterName()
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	resetPasswordToken, err := ui.NewResetPasswordToken(
+		userToken.GetUser(),
+		userToken.GetName(),
+		resource.GetClusterName())
+
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return resetPasswordToken, nil
 }
 
 // u2fRegisterRequest is called to get a U2F challenge for registering a U2F key

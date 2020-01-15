@@ -414,7 +414,7 @@ func (s *IdentityService) GetTOTP(user string) (string, error) {
 	item, err := s.Get(context.TODO(), backend.Key(webPrefix, usersPrefix, user, totpPrefix))
 	if err != nil {
 		if trace.IsNotFound(err) {
-			return "", trace.NotFound("user %q is not found", user)
+			return "", trace.NotFound("OTP key for user(%q) is not found", user)
 		}
 		return "", trace.Wrap(err)
 	}

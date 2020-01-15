@@ -1,7 +1,9 @@
 package auth
 
 import (
+	"bytes"
 	"crypto/subtle"
+	"image/png"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -22,6 +24,8 @@ var fakePasswordHash = []byte(`$2a$10$Yy.e6BmS2SrGbBDsyDLVkOANZmvjjMR890nUGSXFJH
 type ChangePasswordWithTokenRequest struct {
 	// SecondFactorToken is 2nd factor token value
 	SecondFactorToken string `json:"second_factor_token"`
+	// SecondFactorSecret is 2nd factor secret
+	SecondFactorSecret string `json:"second_factor_secret"`
 	// TokenID is this token ID
 	TokenID string `json:"token"`
 	// Password is user password
@@ -257,27 +261,6 @@ func (s *AuthServer) getOTPType(user string) (string, error) {
 	return teleport.HOTP, nil
 }
 
-// GetOTPData returns the OTP Key, Key URL, and the QR code.
-func (s *AuthServer) GetOTPData(user string) (string, []byte, error) {
-	// get otp key from backend
-	otpSecret, err := s.GetTOTP(user)
-	if err != nil {
-		return "", nil, trace.Wrap(err)
-	}
-
-	// create otp url
-	params := map[string][]byte{"secret": []byte(otpSecret)}
-	otpURL := utils.GenerateOTPURL("totp", user, params)
-
-	// create the qr code
-	otpQR, err := utils.GenerateQRCode(otpURL)
-	if err != nil {
-		return "", nil, trace.Wrap(err)
-	}
-
-	return otpURL, otpQR, nil
-}
-
 func (s *AuthServer) changePasswordWithToken(req ChangePasswordWithTokenRequest) (services.User, error) {
 	clusterConfig, err := s.GetClusterConfig()
 	if err != nil {
@@ -336,7 +319,13 @@ func (s *AuthServer) processUserToken2Factor(req ChangePasswordWithTokenRequest,
 	case teleport.OFF:
 		return nil
 	case teleport.OTP, teleport.TOTP, teleport.HOTP:
-		err = s.UpsertTOTP(username, userToken.GetOTPKey())
+		if req.SecondFactorSecret == "" {
+			return trace.BadParameter("missing TOTP secret")
+		}
+
+		// TODO: create a separate method to validate TOTP without
+		// saving it in the DB.
+		err = s.UpsertTOTP(username, req.SecondFactorSecret)
 		if err != nil {
 			return trace.Wrap(err)
 		}
@@ -378,4 +367,26 @@ func (s *AuthServer) processUserToken2Factor(req ChangePasswordWithTokenRequest,
 	}
 
 	return trace.BadParameter("unknown second factor type %q", cap.GetSecondFactor())
+}
+
+// GenerateOTPSecrets creates TOTP secrets and returns the key and QR code.
+func GenerateOTPSecrets(issuerName string, accountName string) (key string, qr []byte, err error) {
+	// create totp key
+	otpKey, err := totp.Generate(totp.GenerateOpts{
+		Issuer:      issuerName,
+		AccountName: accountName,
+	})
+	if err != nil {
+		return "", nil, trace.Wrap(err)
+	}
+
+	// create QR code
+	var otpQRBuf bytes.Buffer
+	otpImage, err := otpKey.Image(456, 456)
+	if err != nil {
+		return "", nil, trace.Wrap(err)
+	}
+	png.Encode(&otpQRBuf, otpImage)
+
+	return otpKey.Secret(), otpQRBuf.Bytes(), nil
 }

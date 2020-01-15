@@ -739,13 +739,6 @@ func (a *AuthWithRoles) UpsertTOTP(user string, otpSecret string) error {
 	return a.authServer.UpsertTOTP(user, otpSecret)
 }
 
-func (a *AuthWithRoles) GetOTPData(user string) (string, []byte, error) {
-	if err := a.currentUserAction(user); err != nil {
-		return "", nil, trace.Wrap(err)
-	}
-	return a.authServer.GetOTPData(user)
-}
-
 func (a *AuthWithRoles) PreAuthenticatedSignIn(user string) (services.WebSession, error) {
 	if err := a.currentUserAction(user); err != nil {
 		return nil, trace.Wrap(err)

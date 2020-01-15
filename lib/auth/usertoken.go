@@ -17,9 +17,7 @@ limitations under the License.
 package auth
 
 import (
-	"bytes"
 	"fmt"
-	"image/png"
 	"net/url"
 	"time"
 
@@ -28,15 +26,13 @@ import (
 	"github.com/gravitational/teleport/lib/utils"
 
 	"github.com/gravitational/trace"
-
-	"github.com/pquerna/otp/totp"
 )
 
 const (
 	// UserTokenTypeInvite indicates invite UI flow
 	UserTokenTypeInvite = "invite"
 	// UserTokenTypePasswordChange indicates change password UI flow
-	UserTokenTypePasswordChange = "password-change"
+	UserTokenTypePasswordChange = "reset-password"
 )
 
 // CreateUserTokenRequest is a request to create a new user token
@@ -62,6 +58,9 @@ func (r *CreateUserTokenRequest) CheckAndSetDefaults() error {
 		r.Type = UserTokenTypePasswordChange
 	}
 
+	// we use the same mechanism to handle invites and reset passwords
+	// as both are about setting up a new password based on auth preferences.
+	// the only difference is default TTL values.
 	switch r.Type {
 	case UserTokenTypeInvite:
 		if r.TTL == 0 {
@@ -133,26 +132,16 @@ func (s *AuthServer) newUserToken(req CreateUserTokenRequest) (services.UserToke
 		return nil, trace.Wrap(err)
 	}
 
-	accountName := req.Name + "@" + s.AuthServiceName
-	code, otpQRCode, err := s.initializeTOTP(accountName)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
 	url, err := formatUserTokenURL(s.publicURL(), tokenID, req.Type)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
 
-	fmt.Printf("AAAAAAAAAAAAAAAAAAAAAAAAA: ", code)
 	userToken := services.NewUserToken(tokenID)
 	userToken.Metadata.SetExpiry(s.clock.Now().UTC().Add(req.TTL))
 	userToken.Spec.User = req.Name
-	userToken.Spec.QRCode = string(otpQRCode)
-	userToken.Spec.OTPKey = code
 	userToken.Spec.Created = s.clock.Now().UTC()
 	userToken.Spec.URL = url
-
 	return &userToken, nil
 }
 
@@ -172,28 +161,6 @@ func (s *AuthServer) publicURL() string {
 	}
 
 	return fmt.Sprintf("https://" + proxyHost)
-}
-
-// initializeTOTP creates TOTP algorithm and returns the key and QR code.
-func (s *AuthServer) initializeTOTP(accountName string) (key string, qr []byte, err error) {
-	// create totp key
-	otpKey, err := totp.Generate(totp.GenerateOpts{
-		Issuer:      "Teleport",
-		AccountName: accountName,
-	})
-	if err != nil {
-		return "", nil, trace.Wrap(err)
-	}
-
-	// create QR code
-	var otpQRBuf bytes.Buffer
-	otpImage, err := otpKey.Image(456, 456)
-	if err != nil {
-		return "", nil, trace.Wrap(err)
-	}
-	png.Encode(&otpQRBuf, otpImage)
-
-	return otpKey.Secret(), otpQRBuf.Bytes(), nil
 }
 
 func formatUserTokenURL(advertiseURL string, tokenID string, reqType string) (string, error) {

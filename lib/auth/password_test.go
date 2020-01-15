@@ -210,6 +210,29 @@ func (s *PasswordSuite) TestChangePasswordWithToken(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *PasswordSuite) TestMama(c *C) {
+	username := "joe@example.com"
+	password := []byte("qweqweqwe")
+
+	_, err := s.prepareForPasswordChange(username, password, teleport.OFF)
+	c.Assert(err, IsNil)
+
+	authPreference, err := services.NewAuthPreference(services.AuthPreferenceSpecV2{
+		Type:         teleport.Local,
+		SecondFactor: teleport.OTP,
+	})
+	c.Assert(err, IsNil)
+
+	err = s.a.SetAuthPreference(authPreference)
+	c.Assert(err, IsNil)
+
+	otpToken, err := totp.GenerateCode("", s.bk.Clock().Now())
+	c.Assert(err, IsNil)
+
+	err = s.a.CheckPassword(username, password, otpToken)
+	c.Assert(err, IsNil)
+}
+
 func (s *PasswordSuite) TestChangePasswordWithTokenOTP(c *C) {
 	authPreference, err := services.NewAuthPreference(services.AuthPreferenceSpecV2{
 		Type:         teleport.Local,

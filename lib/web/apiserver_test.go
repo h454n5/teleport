@@ -1168,10 +1168,11 @@ func (s *WebSuite) TestChangePasswordWithTokenOTP(c *C) {
 	re, err := clt.Get(context.Background(), clt.Endpoint("webapi", "usertokens", token.GetName()), url.Values{})
 	c.Assert(err, IsNil)
 
-	//var out *renderUserInviteResponse
-	//c.Assert(json.Unmarshal(re.Bytes(), &out), IsNil)
-	//c.Assert(out.User, Equals, "bob")
-	//c.Assert(out.InviteToken, Equals, token)
+	var resetPassToken *ui.ResetPasswordToken
+
+	c.Assert(json.Unmarshal(re.Bytes(), &resetPassToken), IsNil)
+	c.Assert(resetPassToken.User, Equals, token.GetUser())
+	c.Assert(resetPassToken.TokenID, Equals, token.GetName())
 
 	st, err := s.server.Auth().GetUserToken(token.GetName())
 	c.Assert(err, IsNil)

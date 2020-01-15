@@ -56,8 +56,6 @@ func (s *UserTokenSuite) TestUnmarshal(c *check.C) {
           },
           "spec": {
             "user": "example@example.com",
-            "hotp": "SE9UUA",
-            "qr_code": "UVJDT0RF",
             "created": "2020-01-14T18:52:39.523076855Z",
             "url": "https://localhost"
           }
@@ -72,8 +70,6 @@ func (s *UserTokenSuite) TestUnmarshal(c *check.C) {
 				Spec: UserTokenSpecV3{
 					Created: created,
 					User:    "example@example.com",
-					HOTP:    "SE9UUA",
-					QRCode:  "UVJDT0RF",
 					URL:     "https://localhost",
 				},
 			},

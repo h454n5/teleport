@@ -32,12 +32,6 @@ type UserToken interface {
 	Resource
 	// GetUser returns User
 	GetUser() string
-	// GetHOTP returns HOTP
-	GetHOTP() []byte
-	// GetQRCode returns QRCode
-	GetQRCode() []byte
-	// GetOTPKey returns OTP key
-	GetOTPKey() string
 	// GetCreated returns Created
 	GetCreated() time.Time
 	// GetURL returns URL
@@ -74,21 +68,6 @@ func (u *UserTokenV3) GetName() string {
 // GetUser returns User
 func (u *UserTokenV3) GetUser() string {
 	return u.Spec.User
-}
-
-// GetHOTP returns HOTP
-func (u *UserTokenV3) GetHOTP() []byte {
-	return []byte(u.Spec.HOTP)
-}
-
-// GetOTPKey returns OTP Key
-func (u *UserTokenV3) GetOTPKey() string {
-	return u.Spec.OTPKey
-}
-
-// GetQRCode returns QRCode
-func (u *UserTokenV3) GetQRCode() []byte {
-	return []byte(u.Spec.QRCode)
 }
 
 // GetCreated returns Created
@@ -170,12 +149,6 @@ func (u UserTokenV3) CheckAndSetDefaults() error {
 type UserTokenSpecV3 struct {
 	// User is user name associated with this token
 	User string `json:"user"`
-	// HOTP is a secret value of one time password secret generator
-	HOTP string `json:"hotp,omitempty"`
-	// OTPKey is is a secret value of one time password secret generator
-	OTPKey string `json:"opt_key,omitempty"`
-	// QRCode is a QR code value
-	QRCode string `json:"qr_code,omitempty"`
 	// Created holds information about when the token was created
 	Created time.Time `json:"created"`
 	// URL is this token URL
@@ -200,15 +173,6 @@ const UserTokenSpecV3Template = `{
   "additionalProperties": false,
   "properties": {
 		"user": {
-			"type": ["string"]
-		},
-		"hotp": {
-			"type": ["string"]
-		},
-		"opt_key": {
-			"type": ["string"]
-		},
-		"qr_code": {
 			"type": ["string"]
 		},
 		"created": {
